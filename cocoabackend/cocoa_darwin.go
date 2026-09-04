@@ -46,9 +46,28 @@ var (
 // SetupWindow records the window parameters. The window is created in Run, on
 // the main thread.
 func SetupWindow(title string, width int, height int) {
+	// TODO: sanity-check that the window size is reasonable.
 	winTitle = title
 	winW = width
 	winH = height
+}
+
+// SetupPopupMode switches the window to a floating non-activating NSPanel
+// (clipboard-manager style): it never steals input focus, starts hidden, and
+// hides itself when it loses key status. Call before Run.
+func SetupPopupMode() {
+	C.cocoa_setPanelMode()
+}
+
+// TogglePopup hides the window when visible, otherwise shows it just below
+// the mouse cursor. Panel mode only.
+func TogglePopup() {
+	C.cocoa_togglePopup()
+}
+
+// HidePopup hides the window when visible. Panel mode only.
+func HidePopup() {
+	C.cocoa_hidePopup()
 }
 
 // SetupIcon records the path of the image (any NSImage-readable format, e.g.

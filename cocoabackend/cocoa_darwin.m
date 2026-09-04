@@ -68,6 +68,23 @@ int iosurface_in_use(void *s) {
 @end
 
 static NSWindow  *gWindow = nil;
+
+// gPanelMode turns the window into a floating non-activating NSPanel with
+// clipboard-manager semantics (see Maccy's FloatingPanel): showing and keying
+// the panel never activates the application, so the frontmost app keeps focus
+// and stays the paste target.
+static BOOL gPanelMode = NO;
+
+// ShireiPanel can take key status without activating the application, so
+// keyboard input (search field, IME) reaches the panel while the frontmost
+// app stays active.
+@interface ShireiPanel : NSPanel
+@end
+@implementation ShireiPanel
+- (BOOL)canBecomeKey {
+    return YES;
+}
+@end
 static ShireiView *gView  = nil;
 static BOOL gWantsFrame = YES;
 
@@ -236,8 +253,14 @@ static const CFAbsoluteTime kInputRenderWindow = 0.5;
     // +[NSTextInputContext currentInputContext] is nil, IMK has no client, and a
     // Japanese IME silently falls back to raw Latin. No-op once we are already key.
     if (self.window && !self.window.isKeyWindow) {
-        [NSApp activateIgnoringOtherApps:YES];
-        [self.window makeKeyAndOrderFront:nil];
+        if (gPanelMode) {
+            // The panel becomes key without activating the app, keeping the
+            // frontmost app (the eventual paste target) in focus.
+            [self.window makeKeyAndOrderFront:nil];
+        } else {
+            [NSApp activateIgnoringOtherApps:YES];
+            [self.window makeKeyAndOrderFront:nil];
+        }
     }
     [self commitMarkedForInterruption];
     NSPoint p = [self viewPoint:e];
@@ -413,10 +436,16 @@ static const CFAbsoluteTime kInputRenderWindow = 0.5;
 
 @implementation ShireiAppDelegate
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {
-    return YES;
+    // Panel mode is tray-driven: the popup starts hidden and hides itself on
+    // focus loss, which must not terminate the app.
+    return !gPanelMode;
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification {
+    if (gPanelMode && gWindow.isVisible) {
+        // Popup semantics: any click or app switch outside the panel hides it.
+        [gWindow orderOut:nil];
+    }
     [gView commitMarkedForInterruption];
     shireiWindowFocus(0);
 }
@@ -438,8 +467,13 @@ static const CFAbsoluteTime kInputRenderWindow = 0.5;
     // delegate callback runs once the run loop is servicing events, where activation
     // reliably sticks and the window becomes key. Fixes the intermittent IME
     // Latin-fallback bug.
-    [NSApp activateIgnoringOtherApps:YES];
-    [gWindow makeKeyAndOrderFront:nil];
+    //
+    // Panel mode skips activation entirely: the popup starts hidden and is
+    // summoned on demand without taking focus from the frontmost app.
+    if (!gPanelMode) {
+        [NSApp activateIgnoringOtherApps:YES];
+        [gWindow makeKeyAndOrderFront:nil];
+    }
 }
 @end
 
@@ -452,20 +486,104 @@ void cocoa_setupWindow(const char *title, int width, int height) {
         NSRect frame = NSMakeRect(0, 0, width, height);
         NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                            NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable;
-        gWindow = [[NSWindow alloc] initWithContentRect:frame
-                                              styleMask:style
-                                                backing:NSBackingStoreBuffered
-                                                  defer:NO];
-        [gWindow setTitle:[NSString stringWithUTF8String:title]];
+        if (gPanelMode) {
+            // Clipboard-manager mode: a floating non-activating panel. It never
+            // takes focus from the frontmost app (that app keeps receiving
+            // Command+V), starts hidden, and hides itself on focus loss.
+            style |= NSWindowStyleMaskNonactivatingPanel | NSWindowStyleMaskFullSizeContentView;
+            gWindow = [[ShireiPanel alloc] initWithContentRect:frame
+                                                     styleMask:style
+                                                       backing:NSBackingStoreBuffered
+                                                         defer:NO];
+            [gWindow setTitle:[NSString stringWithUTF8String:title]];
+            [(NSPanel *)gWindow setFloatingPanel:YES];
+            [gWindow setLevel:NSScreenSaverWindowLevel];
+            [gWindow setCollectionBehavior:NSWindowCollectionBehaviorAuxiliary |
+                                           NSWindowCollectionBehaviorMoveToActiveSpace |
+                                           NSWindowCollectionBehaviorFullScreenAuxiliary];
+            [gWindow setHidesOnDeactivate:NO];
+            [gWindow setTitleVisibility:NSWindowTitleHidden];
+            [gWindow setTitlebarAppearsTransparent:YES];
+            [gWindow standardWindowButton:NSWindowCloseButton].hidden = YES;
+            [gWindow standardWindowButton:NSWindowMiniaturizeButton].hidden = YES;
+            [gWindow standardWindowButton:NSWindowZoomButton].hidden = YES;
 
-        gView = [[ShireiView alloc] initWithFrame:frame];
-        [gWindow setContentView:gView];
-        [gWindow setDelegate:(id<NSWindowDelegate>)[NSApp delegate]];
-        [gWindow setAcceptsMouseMovedEvents:YES];
-        [gWindow makeFirstResponder:gView];
-        [gWindow center];
-        [gWindow makeKeyAndOrderFront:nil];
+            gView = [[ShireiView alloc] initWithFrame:frame];
+            [gWindow setContentView:gView];
+            [gWindow setDelegate:(id<NSWindowDelegate>)[NSApp delegate]];
+            [gWindow setAcceptsMouseMovedEvents:YES];
+            [gWindow makeFirstResponder:gView];
+            // Starts hidden: cocoa_togglePopup summons it on demand.
+        } else {
+            gWindow = [[NSWindow alloc] initWithContentRect:frame
+                                                  styleMask:style
+                                                    backing:NSBackingStoreBuffered
+                                                      defer:NO];
+            [gWindow setTitle:[NSString stringWithUTF8String:title]];
+
+            gView = [[ShireiView alloc] initWithFrame:frame];
+            [gWindow setContentView:gView];
+            [gWindow setDelegate:(id<NSWindowDelegate>)[NSApp delegate]];
+            [gWindow setAcceptsMouseMovedEvents:YES];
+            [gWindow makeFirstResponder:gView];
+            [gWindow center];
+            [gWindow makeKeyAndOrderFront:nil];
+        }
     }
+}
+
+// cocoa_setPanelMode enables clipboard-manager popup semantics for the window.
+// Must be called before cocoa_setupWindow.
+void cocoa_setPanelMode(void) {
+    gPanelMode = YES;
+}
+
+// cocoa_togglePopup hides the panel when visible, otherwise summons it just
+// below the mouse cursor, clamped to the visible frame of the cursor's screen
+// (Maccy's PopupPosition.cursor). The panel takes key status without
+// activating the application.
+void cocoa_togglePopup(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @autoreleasepool {
+            if (!gWindow) {
+                return;
+            }
+            if (gWindow.isVisible) {
+                [gWindow orderOut:nil];
+                return;
+            }
+            NSRect frame = gWindow.frame;
+            NSPoint mouse = [NSEvent mouseLocation];
+            NSPoint origin = NSMakePoint(mouse.x, mouse.y - frame.size.height);
+            NSScreen *screen = nil;
+            for (NSScreen *s in [NSScreen screens]) {
+                if (NSMouseInRect(mouse, s.frame, NO)) {
+                    screen = s;
+                    break;
+                }
+            }
+            if (screen) {
+                NSRect visible = screen.visibleFrame;
+                origin.x = MIN(MAX(origin.x, NSMinX(visible)), NSMaxX(visible) - frame.size.width);
+                origin.y = MIN(MAX(origin.y, NSMinY(visible)), NSMaxY(visible) - frame.size.height);
+            }
+            [gWindow setFrameOrigin:origin];
+            [gWindow orderFrontRegardless];
+            [gWindow makeKeyAndOrderFront:nil];
+        }
+    });
+}
+
+// cocoa_hidePopup hides the panel when visible (paste path: get the panel out
+// of the way before posting Command+V).
+void cocoa_hidePopup(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @autoreleasepool {
+            if (gWindow && gWindow.isVisible) {
+                [gWindow orderOut:nil];
+            }
+        }
+    });
 }
 
 // cocoa_setAppIcon sets the Dock/Cmd-Tab icon. macOS windows have no title-bar

@@ -16,6 +16,24 @@ func SetupWindow(title string, width, height int) {
 	cocoabackend.SetupWindow(title, width, height)
 }
 
+// SetupPopupMode switches the window to a non-activating popup panel
+// (clipboard-manager style): it never steals input focus, starts hidden, and
+// hides itself on focus loss. Call it before Run. macOS only.
+func SetupPopupMode() {
+	cocoabackend.SetupPopupMode()
+}
+
+// TogglePopup shows the window at the mouse cursor or hides it. Panel mode
+// only; no-op before Run.
+func TogglePopup() {
+	cocoabackend.TogglePopup()
+}
+
+// HidePopup hides the window when visible. Panel mode only.
+func HidePopup() {
+	cocoabackend.HidePopup()
+}
+
 // SetupIcon records the path of the image (PNG etc.) used as the app's icon —
 // shown wherever the platform shows one (macOS: Dock; Windows: title bar and
 // taskbar; X11: wherever the WM displays _NET_WM_ICON; Wayland: via

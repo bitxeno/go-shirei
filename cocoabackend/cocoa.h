@@ -20,6 +20,15 @@ void *cocoa_nsWindow(void); // live NSWindow *, or NULL before setup
 void  cocoa_setClipboard(const char *s);
 char *cocoa_getClipboard(void); // returns a malloc'd string (NULL if empty); caller frees
 
+// ---- popup panel mode (clipboard-manager style) ----
+// cocoa_setPanelMode switches the window to a floating non-activating NSPanel
+// that never steals input focus; call before cocoa_setupWindow. In panel mode
+// the window starts hidden, hides itself when it loses key status, and
+// cocoa_togglePopup summons it just below the mouse cursor.
+void cocoa_setPanelMode(void);
+void cocoa_togglePopup(void);
+void cocoa_hidePopup(void);
+
 // ---- present (zero-copy IOSurface + CALayer) ----
 // The renderer rasterizes directly into an IOSurface's memory; setting it as a
 // layer's contents lets the window server composite it on the GPU with no per-frame
