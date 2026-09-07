@@ -153,12 +153,24 @@ func glyphBMBytes(bm GlyphBM) int {
 	return len(bm.Alpha) + len(bm.RGBA)
 }
 
+// rasterizeGlyphPlatform, when set (darwin: CoreText), rasterizes glyph ink
+// before the pure-Go outline path. ok=false falls through. Color-bitmap
+// stamps (sbix / CBDT) always take the Go path first, so emoji keeps the
+// platform-independent PNG decode pipeline.
+var rasterizeGlyphPlatform func(key GlyphKey) (GlyphBM, bool)
+
 // rasterizeGlyph renders a glyph at the key's device-pixel size. Color-bitmap
 // data (sbix / CBDT) becomes an RGBA stamp; otherwise the outline is filled
-// into an alpha coverage mask via the pure-Go x/image/vector rasterizer.
+// into an alpha coverage mask via the platform rasterizer (CoreText on
+// darwin) or the pure-Go x/image/vector rasterizer.
 func rasterizeGlyph(key GlyphKey) GlyphBM {
 	if bm, ok := rasterizeColorBitmap(key); ok {
 		return bm
+	}
+	if rasterizeGlyphPlatform != nil {
+		if bm, ok := rasterizeGlyphPlatform(key); ok {
+			return bm
+		}
 	}
 	outline := GlyphOutline(key.FontId, key.GlyphId)
 	if len(outline.Segments) == 0 {

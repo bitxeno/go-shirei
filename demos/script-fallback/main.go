@@ -112,6 +112,17 @@ func RootView() {
 			Text(b.text, TextStyleWith(DefaultTextStyle(), FontSize(18), TextColor(0, 0, 12, 1)))
 		})
 	}
+
+	// Bold comparison: the same CJK+Latin string in regular vs bold,
+	// exercising the CoreText weight cascade (PingFang UI Display SC
+	// regular vs bold instance, Helvetica vs Helvetica Bold for Latin).
+	Label("Bold comparison", FontSize(12), FontWeight(WeightBold), TextColor(210, 40, 35, 1))
+	Container(Attrs(Expand, Pad(8), Gap(4), Background(0, 0, 100, 1), Corners(6)), func() {
+		Text("常规 修复连接服务器卡住 Fix server hang 123",
+			TextStyleWith(DefaultTextStyle(), FontSize(18), TextColor(0, 0, 12, 1)))
+		Text("加粗 修复连接服务器卡住 Fix server hang 123",
+			TextStyleWith(DefaultTextStyle(), FontSize(18), FontWeight(WeightBold), TextColor(0, 0, 12, 1)))
+	})
 }
 
 var (

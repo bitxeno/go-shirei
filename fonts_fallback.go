@@ -59,9 +59,19 @@ func fontLookupEpoch() uint64 {
 	return e
 }
 
+// fallbackScanPlatform, when set (darwin: CoreText cascade list), picks the
+// fallback face before the script-bucket name lists. ok=false falls through
+// to the Go lists, which remain the emoji path and the last-resort safety net.
+var fallbackScanPlatform func(ch rune, aspect FontAspect) (fid FontId, gid GlyphId, ok bool)
+
 // fallbackScan walks the script-bucket chain for one rune, parsing a candidate
 // in full only when its cmap covers ch.
 func fallbackScan(ch rune, aspect FontAspect) (FontId, GlyphId) {
+	if fallbackScanPlatform != nil {
+		if fid, gid, ok := fallbackScanPlatform(ch, aspect); ok {
+			return fid, gid
+		}
+	}
 	for _, family := range fallbackFamiliesFor(ch) {
 		fid := LookupFace(FaceLookupKey{family, aspect})
 		if fid == 0 {

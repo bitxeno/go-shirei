@@ -513,7 +513,7 @@ func CaretHeightForStyle(style TextStyleAttrs) f32 {
 	if em <= 0 {
 		return 0
 	}
-	fid, _ := findMatchingFontAndGlyph(' ', fontIdsForStyle(style), style.FontAspect)
+	fid, _ := findMatchingFontAndGlyph(' ', fontIdsForStyle(style), style.FontAspect, 0)
 	d := fontDescenderDepth(fid, em)
 	if d <= 0 {
 		return em
@@ -767,6 +767,10 @@ func produceShapedSegments(runes []rune, dirs []Direction, base TextStyleAttrs, 
 	}
 	faceCache := make(map[faceCacheKey][]FontId)
 
+	var prevFont FontId
+	var prevStyle TextStyleAttrs
+	prevSet := false
+
 	fontIdsFor := func(st TextStyleAttrs) []FontId {
 		key := faceCacheKey{aspect: st.FontAspect, families: strings.Join(st.FontFamilies, "\x00")}
 		if ids, ok := faceCache[key]; ok {
@@ -787,7 +791,15 @@ func produceShapedSegments(runes []rune, dirs []Direction, base TextStyleAttrs, 
 			// line still needs the same face metrics as ordinary text.
 			fontChar = ' '
 		}
-		font, _ := findMatchingFontAndGlyph(fontChar, fontIds, st.FontAspect)
+		// prevFont carries run continuity across adjacent runes of the same
+		// shaping style (see findMatchingFontAndGlyph). A style change
+		// resets it so an explicit family request is never shadowed.
+		var usePrev FontId
+		if prevSet && fontShapeEqual(st, prevStyle) {
+			usePrev = prevFont
+		}
+		font, _ := findMatchingFontAndGlyph(fontChar, fontIds, st.FontAspect, usePrev)
+		prevFont, prevStyle, prevSet = font, st, true
 		return GlyphSegmentProps{
 			font:    font,
 			size:    st.FontSize,
@@ -1037,7 +1049,7 @@ func ShapeTextMax(text string, style TextStyleAttrs, maxWidth float32, spans ...
 	return shaped
 }
 
-func findMatchingFontAndGlyph(ch rune, fonts []FontId, aspect FontAspect) (FontId, GlyphId) {
+func findMatchingFontAndGlyph(ch rune, fonts []FontId, aspect FontAspect, prevFont FontId) (FontId, GlyphId) {
 	var fontId FontId
 	var glyphId GlyphId
 	for _, fid := range fonts {
@@ -1051,6 +1063,15 @@ func findMatchingFontAndGlyph(ch rune, fonts []FontId, aspect FontAspect) (FontI
 	}
 
 	if fontId == 0 || glyphId == 0 {
+		// Run continuity: when the caller's families do not cover ch,
+		// prefer the previous rune's face (same shaping style) if it
+		// covers ch, so spaces and punctuation do not bounce to an
+		// unrelated cascade font mid-run. Otherwise consult fallback.
+		if prevFont != 0 && !GetFace(prevFont).colorPaintOnly {
+			if gid := LookupGlyph(prevFont, ch); gid != 0 {
+				return prevFont, gid
+			}
+		}
 		return FallbackFontFor(ch, aspect)
 	}
 
