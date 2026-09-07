@@ -284,9 +284,16 @@ func toastCard(t toastEntry, now time.Time) {
 	}
 
 	var dismissId ContainerId
-	// NoClickThrough: sit inside the ClickThrough corner host but accept hits.
-	cardId := ContainerWithKey(t.id, Attrs(NoClickThrough, FixWidth(w), Clip, Corners(8),
-		BackgroundVec(a.Background), BoxShadow(12), NoAnimate), func() {
+	// Display-only toasts (NoDismiss: no × button, nothing clickable) stay
+	// click-through inside the click-through corner host, so they never
+	// swallow gestures aimed at the UI beneath them. Interactive toasts opt
+	// back into hit-testing for the × button.
+	cardAttrs := Attrs(FixWidth(w), Clip, Corners(8),
+		BackgroundVec(a.Background), BoxShadow(12), NoAnimate)
+	if !a.NoDismiss {
+		cardAttrs = AttrsWith(cardAttrs, NoClickThrough)
+	}
+	cardId := ContainerWithKey(t.id, cardAttrs, func() {
 		// Expand so this column takes the card width; without it the row is
 		// content-sized and Filler/Grow have no leftover to push × right.
 		Container(Attrs(Expand, Pad(pad), Gap(8)), func() {
