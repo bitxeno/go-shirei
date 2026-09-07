@@ -59,15 +59,15 @@ static int ct_glyph_bounds(void *font, unsigned gid,
 // so translating by (-left, -bottom) places ink at top-down buffer rows with
 // row 0 == ink top, matching GlyphBM's y-down layout. Returns 1 on success.
 static int ct_draw_glyph(void *font, unsigned gid, unsigned char *buf,
-                         int w, int h, float left, float bottom) {
+                         int w, int h, float left, float bottom, int smooth) {
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceGray();
     CGContextRef ctx = CGBitmapContextCreate(buf, w, h, 8, w, cs, kCGImageAlphaNone);
     CGColorSpaceRelease(cs);
     if (!ctx) return 0;
     CGContextSetRGBFillColor(ctx, 1, 1, 1, 1);
     CGContextSetTextMatrix(ctx, CGAffineTransformIdentity);
-    CGContextSetAllowsFontSmoothing(ctx, true);
-    CGContextSetShouldSmoothFonts(ctx, true);
+    CGContextSetAllowsFontSmoothing(ctx, smooth ? true : false);
+    CGContextSetShouldSmoothFonts(ctx, smooth ? true : false);
     CGContextSetShouldAntialias(ctx, true);
     CGContextTranslateCTM(ctx, -left, -bottom);
     CGGlyph g = (CGGlyph)gid;
@@ -269,6 +269,13 @@ func init() {
 	fallbackScanPlatform = fallbackScanCoreText
 }
 
+// ctFontSmoothing selects CoreText font smoothing (stem darkening + gamma)
+// for rasterized masks. It stays OFF: smoothing bakes extra weight into the
+// coverage mask, making every weight look heavier than the same face drawn
+// by the Go rasterizer (or requested). The mask must remain pure coverage;
+// flip to true only for a deliberately "native darkened" look.
+const ctFontSmoothing = false
+
 func ctGoString(p *C.char) string {
 	if p == nil {
 		return ""
@@ -388,7 +395,7 @@ func rasterizeGlyphCoreText(key GlyphKey) (GlyphBM, bool) {
 	}
 	pix := make([]byte, w*h)
 	if C.ct_draw_glyph(f, C.uint(key.GlyphId), (*C.uchar)(unsafe.Pointer(&pix[0])),
-		C.int(w), C.int(h), C.float(fl), C.float(fb)) == 0 {
+		C.int(w), C.int(h), C.float(fl), C.float(fb), C.int(b2i(ctFontSmoothing))) == 0 {
 		return GlyphBM{}, false
 	}
 	return GlyphBM{
